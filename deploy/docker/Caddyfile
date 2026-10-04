@@ -1,0 +1,14 @@
+{
+    email {$ACME_EMAIL}
+    # The app shares this namespace; no unauthenticated admin API is needed.
+    admin off
+}
+
+{$XGIFT_DOMAIN} {
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy 127.0.0.1:8787 {
+        # Ignore any client-supplied X-Real-IP, including spoofed headers.
+        header_up X-Real-IP {http.request.remote.host}
+    }
+}

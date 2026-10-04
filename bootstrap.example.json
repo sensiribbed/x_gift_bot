@@ -1,0 +1,31 @@
+{
+  "cookies": {
+    "cookies": [
+      {"name": "auth_token", "value": "CHANGE_ME", "domain": ".x.com"},
+      {"name": "ct0", "value": "CHANGE_ME", "domain": ".x.com"}
+    ]
+  },
+  "api-auth": {
+    "Authorization": "CHANGE_ME",
+    "UserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+  },
+  "card": {
+    "number": "CHANGE_ME",
+    "exp_month": "CHANGE_ME",
+    "exp_year": "CHANGE_ME",
+    "cvc": "CHANGE_ME",
+    "billing_name": "CHANGE_ME",
+    "email": "CHANGE_ME",
+    "billing_country": "CHANGE_ME"
+  },
+  "proxy": {"outbounds": [{"type": "direct", "tag": "direct"}]},
+  "stripe-key": "CHANGE_ME",
+  "catalog": {
+    "merchant": "acct_1Ika5JA3KZ32dPo1",
+    "currency": "bdt",
+    "plans": [
+      {"months": 3, "amount": 30000, "product": "prod_TJXJtpzqCpI36N"},
+      {"months": 6, "amount": 60000, "product": "prod_TJXKKNJwZJIhCM"}
+    ]
+  }
+}

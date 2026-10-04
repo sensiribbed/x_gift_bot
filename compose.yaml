@@ -1,0 +1,91 @@
+x-app: &app
+  image: ${XGIFT_IMAGE:-ghcr.io/sensiribbed/x_gift_bot:latest}
+  environment: &env
+    TZ: ${TZ:-Asia/Shanghai}
+    XGIFT_ORIGIN: https://${XGIFT_DOMAIN:?Fill XGIFT_DOMAIN in .env}
+    XGIFT_LISTEN: 127.0.0.1:8787
+    XGIFT_DATA_DIR: /data
+    XGIFT_PASSWORD_FILE: /data/vault-password
+    XGIFT_ADMIN_PASSWORD_FILE: /data/admin-password
+    XGIFT_PAYMENTS_ENABLED: ${XGIFT_PAYMENTS_ENABLED:-false}
+  volumes:
+    - app_data:/data
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    environment:
+      XGIFT_DOMAIN: ${XGIFT_DOMAIN:?Fill XGIFT_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Fill ACME_EMAIL in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  app:
+    <<: *app
+    secrets:
+      - bootstrap
+    restart: unless-stopped
+    # Preserve upstream's loopback-only listener and trusted proxy boundary.
+    network_mode: service:caddy
+    depends_on:
+      caddy:
+        condition: service_started
+        restart: true
+    stop_grace_period: 70s
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, '5', http://127.0.0.1:8787/healthz]
+      interval: 30s
+      timeout: 6s
+      retries: 5
+      start_period: 60s
+
+  cli:
+    <<: *app
+    profiles: [tools]
+    entrypoint: [docker-entrypoint, xgift, --db, /data/vault.db]
+    command: [status]
+    stdin_open: true
+    tty: true
+
+  backup:
+    image: alpine:3.22
+    profiles: [tools]
+    network_mode: none
+    volumes:
+      - app_data:/snapshot/app
+      - caddy_data:/snapshot/caddy-data
+      - caddy_config:/snapshot/caddy-config
+    entrypoint: [tar]
+    command: [--help]
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:
+
+secrets:
+  bootstrap:
+    file: ./bootstrap.json

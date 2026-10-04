@@ -17,3 +17,5 @@ __pycache__/
 .cloudflare/
 node_modules/
 .artifacts/
+/backups/
+/bootstrap.json

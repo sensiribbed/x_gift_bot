@@ -1,0 +1,11 @@
+# Optional local build; VPS deployment uses compose.yaml only.
+x-build: &build
+  context: .
+  args:
+    GO_IMAGE: ${GO_IMAGE:-golang:1.27.1-bookworm}
+    NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+services:
+  app:
+    build: *build
+  cli:
+    build: *build
