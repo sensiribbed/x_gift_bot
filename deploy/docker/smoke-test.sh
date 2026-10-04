@@ -34,6 +34,11 @@ healthy() {
     return 1
 }
 healthy
+if docker exec "$name" xgift-diagnose 00000000000000000000000000000000 > "$tmp/diagnose.txt" 2>&1; then
+    echo 'Diagnostics should report that no failure record exists' >&2
+    exit 1
+fi
+grep -q 'no saved failure found for this order ID' "$tmp/diagnose.txt"
 before="$(docker exec "$name" sha256sum /data/vault-password /data/admin-password)"
 docker restart "$name"
 healthy

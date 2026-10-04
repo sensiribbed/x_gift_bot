@@ -180,6 +180,15 @@ docker compose up -d
 
 ## 6. 原理与排错
 
+订单进入 review 时，可只读查看已加密保存的错误分类（不会访问 X/Stripe、创建订单或付款）：
+
+```bash
+docker compose pull cli
+docker compose run --rm --no-deps -T --entrypoint xgift-diagnose cli 日志里的32位订单ID
+```
+
+`X_PRODUCT_OR_PRICE_LIST_MISMATCH` 表示 X 返回的商品 ID 或价格列表数量与程序预期不符；`X_PRICE_CURRENCY_OR_PAYMENT_TYPE_MISMATCH` 表示报价、币种或一次性支付类型不符合目录。不要靠猜测修改价格或跳过校验。诊断只打印错误分类，不输出原始响应、Cookie、卡片信息或支付链接。
+
 - app 和 Caddy 共享网络，后端保留 127.0.0.1:8787 监听限制；公网只发布 80/443。Caddy 重写 X-Real-IP，管理 API 关闭。重建 Caddy 要同时重建 app，维护脚本已处理。
 - app 使用 UID 10001、只读根文件系统，随机密码文件权限 0600，启动日志不输出密码。
 - bootstrap.json is incomplete/invalid：替换占位值并检查 JSON、金额。

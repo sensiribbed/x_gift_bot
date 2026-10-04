@@ -17,8 +17,10 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY --from=frontend /src/internal/site/assets/ ./internal/site/assets/
-RUN go build -trimpath -o /out/xgift ./cmd/xgift && \
-    go build -trimpath -o /out/xgift-web ./cmd/xgift-web
+RUN go test ./cmd/xgift-diagnose && \
+    go build -trimpath -o /out/xgift ./cmd/xgift && \
+    go build -trimpath -o /out/xgift-web ./cmd/xgift-web && \
+    go build -trimpath -o /out/xgift-diagnose ./cmd/xgift-diagnose
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata jq && \
