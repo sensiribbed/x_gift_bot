@@ -38,9 +38,14 @@ func Eligibility(ctx context.Context, v *vault.Vault, user string, port int) (st
 func (p Plan) Name() string { return fmt.Sprintf("Premium Gift - %d months", p.Months) }
 
 type xClient struct {
-	vault   *vault.Vault
-	http    *http.Client
-	headers http.Header
+	// Set only after validating an explicitly replaced public order.
+	publicReplacement string
+	vault             *vault.Vault
+	http              *http.Client
+	regionalHTTP      *http.Client
+	headers           http.Header
+	readCheckout      func(context.Context, *Record) (*paymentPage, error)
+	readCheckoutPaid  func(context.Context, *Record, Plan) (bool, error)
 }
 
 func newXClient(v *vault.Vault, port int) (*xClient, error) {
@@ -85,11 +90,20 @@ func newXClient(v *vault.Vault, port int) (*xClient, error) {
 	if !found["ct0"] || !found["auth_token"] {
 		return nil, errors.New("required X cookies missing")
 	}
+	// Account checks connect directly. Regional pricing and checkout creation
+	// must share the configured exit because X prices depend on its country.
+	newClient := func(proxy func(*http.Request) (*url.URL, error)) *http.Client {
+		return &http.Client{Transport: &http.Transport{Proxy: proxy, TLSHandshakeTimeout: 15 * time.Second}, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("unexpected X API redirect") }}
+	}
 	p, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(p), TLSHandshakeTimeout: 15 * time.Second}, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("unexpected X API redirect") }}
-	return &xClient{http: client, headers: h, vault: v}, nil
+	return &xClient{http: newClient(nil), regionalHTTP: newClient(http.ProxyURL(p)), headers: h, vault: v}, nil
 }
-func (c *xClient) close() { c.http.CloseIdleConnections() }
+func (c *xClient) close() {
+	c.http.CloseIdleConnections()
+	if c.regionalHTTP != nil {
+		c.regionalHTTP.CloseIdleConnections()
+	}
+}
 func (c *xClient) call(ctx context.Context, user, name, id string, variables any, mutation bool, out any) error {
 	if mutation {
 		return c.callOnce(ctx, user, name, id, variables, true, out)
@@ -175,7 +189,14 @@ func (c *xClient) callOnce(ctx context.Context, user, name, id string, variables
 	}
 	req.Header = c.headers.Clone()
 	req.Header.Set("Referer", "https://x.com/"+user+"/gift-premium")
-	res, e := c.http.Do(req)
+	client := c.http
+	if mutation || name == "useSubscriptionProductDetailsByRestIdQuery" {
+		if c.regionalHTTP == nil {
+			return errors.New("X regional checkout proxy is unavailable")
+		}
+		client = c.regionalHTTP
+	}
+	res, e := client.Do(req)
 	if e != nil {
 		audit.Phase, audit.Cause = "transport_failed", e.Error()
 		return temporary(fmt.Errorf("X %s request failed", name))
@@ -287,6 +308,12 @@ func (c *xClient) quote(ctx context.Context, user string, p Plan) error {
 	return nil
 }
 func (c *xClient) create(ctx context.Context, user, recipient string, p Plan) (string, string, error) {
+	if err := c.checkCreation(ctx, time.Now()); err != nil {
+		return "", "", err
+	}
+	if err := reserveCheckoutCreation(c.vault, time.Now()); err != nil {
+		return "", "", err
+	}
 	var r struct {
 		Data struct {
 			Gift struct {
