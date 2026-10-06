@@ -15,7 +15,7 @@ import { request } from "./shared";
 
 // Standalone eligibility probe next to the redemption card: a visitor can
 // verify an X account before involving any redemption code. Advisory only.
-export function EligibilityCard() {
+export function EligibilityCard({ lite = false }: { lite?: boolean } = {}) {
   const [username, setUsername] = useState("");
   const [checking, setChecking] = useState(false);
   const [invalid, setInvalid] = useState(false);
@@ -92,7 +92,7 @@ export function EligibilityCard() {
         </Typography>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        兑换前先确认 X 账号当前能否接收 Premium 赠送。检测不消耗兑换码。
+        {lite ? "确认 X 账号当前能否接收 Premium 赠送。检测不会创建订单。" : "兑换前先确认 X 账号当前能否接收 Premium 赠送。检测不消耗兑换码。"}
       </Typography>
       <Stack
         component="form"
@@ -161,7 +161,7 @@ export function EligibilityCard() {
         )}
         <Box sx={{ flexGrow: 1 }} aria-hidden="true" />
         <Typography variant="caption" color="text.secondary" component="p">
-          结果仅供参考，提交兑换时系统会向 X 再次核实。
+          {lite ? "结果仅供参考，生成付款链接时会向 X 再次核实。" : "结果仅供参考，提交兑换时系统会向 X 再次核实。"}
         </Typography>
       </Stack>
     </Paper>

@@ -1,0 +1,30 @@
+name: Sync upstream into Lite
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: sync-upstream-lite
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Merge upstream while keeping Lite entrypoints
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/mizorewww/x_gift_bot.git
+          git fetch upstream main
+          git merge --no-edit upstream/main
+          git push origin HEAD:main
+      # A GITHUB_TOKEN push does not trigger the push workflow. Explicit dispatch does.
+      - name: Build and test the merged Lite image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docker-publish.yml --ref main

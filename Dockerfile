@@ -7,7 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY frontend ./frontend
-RUN mkdir -p internal/site/assets && npm run build
+RUN npm run check && node frontend/scripts/build-lite.mjs
 
 FROM ${GO_IMAGE} AS backend
 WORKDIR /src
@@ -17,10 +17,9 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY --from=frontend /src/internal/site/assets/ ./internal/site/assets/
-RUN go test ./cmd/xgift-diagnose && \
-    go build -trimpath -o /out/xgift ./cmd/xgift && \
-    go build -trimpath -o /out/xgift-web ./cmd/xgift-web && \
-    go build -trimpath -o /out/xgift-diagnose ./cmd/xgift-diagnose
+RUN go test ./internal/site ./internal/checkout ./cmd/xgift-config && \
+    go build -trimpath -o /out/xgift-lite ./cmd/xgift-lite && \
+    go build -trimpath -o /out/xgift-config ./cmd/xgift-config
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata jq && \
@@ -33,4 +32,4 @@ COPY --chmod=755 deploy/docker/bootstrap.sh /usr/local/bin/xgift-bootstrap
 USER 10001:10001
 WORKDIR /data
 ENTRYPOINT ["docker-entrypoint"]
-CMD ["xgift-web"]
+CMD ["xgift-lite"]

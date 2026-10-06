@@ -1,5 +1,9 @@
 # XGift
 
+> **本分支 Docker 默认是 XGift Lite：仅保留检测赠送资格和手动付款链接。**
+> 镜像：`ghcr.io/sensiribbed/x_gift_bot:lite`（amd64 / arm64）。
+> [精简版部署、旧版迁移、HTTPS、同步上游说明](DOCKER.md)。以下是保留的上游完整版说明，完整版功能不在 Lite 站点开放。
+
 X (Twitter) Premium 礼品兑换平台。你生成兑换码发给用户，用户在网页上输入兑换码和自己的 X 用户名，系统自动完成 Premium 赠送的下单与付款。
 
 - **兑换页**：用户自助兑换，实时显示处理进度

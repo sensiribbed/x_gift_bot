@@ -1,13 +1,11 @@
 x-app: &app
-  image: ${XGIFT_IMAGE:-ghcr.io/sensiribbed/x_gift_bot:latest}
+  image: ${XGIFT_IMAGE:-ghcr.io/sensiribbed/x_gift_bot:lite}
   environment: &env
     TZ: ${TZ:-Asia/Shanghai}
     XGIFT_ORIGIN: https://${XGIFT_DOMAIN:?Fill XGIFT_DOMAIN in .env}
     XGIFT_LISTEN: 127.0.0.1:8787
     XGIFT_DATA_DIR: /data
     XGIFT_PASSWORD_FILE: /data/vault-password
-    XGIFT_ADMIN_PASSWORD_FILE: /data/admin-password
-    XGIFT_PAYMENTS_ENABLED: ${XGIFT_PAYMENTS_ENABLED:-false}
   volumes:
     - app_data:/data
   read_only: true
@@ -29,7 +27,7 @@ services:
       XGIFT_DOMAIN: ${XGIFT_DOMAIN:?Fill XGIFT_DOMAIN in .env}
       ACME_EMAIL: ${ACME_EMAIL:?Fill ACME_EMAIL in .env}
     ports:
-      - '80:80'
+      - '${HTTP_PORT:-80}:80'
       - '443:443'
       - '443:443/udp'
     volumes:
@@ -65,7 +63,7 @@ services:
   cli:
     <<: *app
     profiles: [tools]
-    entrypoint: [docker-entrypoint, xgift, --db, /data/vault.db]
+    entrypoint: [docker-entrypoint, xgift-config, --db, /data/vault.db]
     command: [status]
     stdin_open: true
     tty: true

@@ -1,4 +1,4 @@
-name: Build and publish Docker image
+name: Build and publish Lite Docker image
 on:
   push:
     branches: [main, docker]
@@ -41,14 +41,15 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.title=XGift Lite
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
       - name: Smoke test automatic bootstrap, health, and restart
         run: bash deploy/docker/smoke-test.sh "$IMAGE:test"
       - name: Publish verified architecture
         run: |
-          docker tag "$IMAGE:test" "$IMAGE:sha-${GITHUB_SHA}-${{ matrix.arch }}"
-          docker push "$IMAGE:sha-${GITHUB_SHA}-${{ matrix.arch }}"
+          docker tag "$IMAGE:test" "$IMAGE:lite-sha-${GITHUB_SHA}-${{ matrix.arch }}"
+          docker push "$IMAGE:lite-sha-${GITHUB_SHA}-${{ matrix.arch }}"
   publish:
     needs: build
     runs-on: ubuntu-24.04
@@ -63,6 +64,6 @@ jobs:
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           docker buildx imagetools create \
-            --tag "$image:latest" --tag "$image:sha-$GITHUB_SHA" \
-            "$image:sha-$GITHUB_SHA-amd64" "$image:sha-$GITHUB_SHA-arm64"
-          docker buildx imagetools inspect "$image:latest"
+            --tag "$image:lite" --tag "$image:lite-sha-$GITHUB_SHA" \
+            "$image:lite-sha-$GITHUB_SHA-amd64" "$image:lite-sha-$GITHUB_SHA-arm64"
+          docker buildx imagetools inspect "$image:lite"

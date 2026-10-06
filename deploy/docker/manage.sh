@@ -51,12 +51,8 @@ backup() {
 
 case "${1:-help}" in
     init)
-        dc pull cli
-        [ -f bootstrap.json ] || printf '{}\n' > bootstrap.json
-        echo 'Wizard: keep /data/vault-password; generate site config: y; use your https://domain; keep 127.0.0.1:8787.'
-        echo 'Payment switch is controlled by .env, not the generated /data/site.env.'
-        dc run --rm --no-deps cli setup
-        dc run --rm --no-deps -T cli status
+        [ -f bootstrap.json ] || die 'Copy bootstrap.example.json to bootstrap.json and fill the required values first.'
+        dc pull app caddy
         start
         ;;
     up) start ;;
