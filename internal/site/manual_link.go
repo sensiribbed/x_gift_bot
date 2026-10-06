@@ -132,7 +132,7 @@ func (s *server) executeManualLink(w http.ResponseWriter, r *http.Request, q man
 		// Error classification only: never log links, ownership cookies, card data,
 		// upstream response bodies or authorization headers.
 		reason := manualLinkFailureReason(err)
-		log.Printf("manual link failed: public=%t username=%s months=%d reason=%s", publicOwner != "", q.Username, q.Months, reason)
+		log.Printf("manual link failed: public=%t username=%s months=%d reason=%s detail=%s", publicOwner != "", q.Username, q.Months, reason, checkout.LinkFailureCode(err))
 		switch {
 		case errors.Is(err, checkout.ErrCheckoutRateLimited):
 			seconds := 15
@@ -278,7 +278,11 @@ func (s *server) tryServePublicLink(w http.ResponseWriter, r *http.Request, q ma
 	} else {
 		record, hit, err = checkout.TryCachedPublicLink(ctx, s.vault, q.Username, owner, s.port, q.Months)
 	}
-	if err != nil || !hit {
+	if err != nil {
+		log.Printf("manual link cache verification failed: months=%d detail=%s", q.Months, checkout.LinkFailureCode(err))
+		return false
+	}
+	if !hit {
 		return false
 	}
 	s.respondManualLink(w, record, owner)
