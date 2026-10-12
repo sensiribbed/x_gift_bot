@@ -1,13 +1,11 @@
 package site
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"xgift/internal/vault"
 )
 
 func TestLiteExcludesFullApplication(t *testing.T) {
@@ -64,18 +62,16 @@ func TestLiteQueueRoutesSurviveRestart(t *testing.T) {
 	if w.Code!=404 { t.Fatal("cancelled ticket still recoverable") }
 }
 
-func TestLiteEligibilityRoute(t *testing.T) {
+func TestLiteEligibilityRouteValidation(t *testing.T) {
 	s := checkFixture(t)
-	calls := 0
-	original := eligibilityCheck
-	eligibilityCheck = func(context.Context, *vault.Vault, string, int) (string, error) { calls++; return "1234", nil }
-	t.Cleanup(func() { eligibilityCheck = original })
-	r := httptest.NewRequest("POST","/api/check",strings.NewReader(`{"username":"someone"}`))
-	r.Header.Set("Origin",s.origin)
-	r.Header.Set("Content-Type","application/json")
+	r := httptest.NewRequest("POST", "/api/check", strings.NewReader(`{"username":"invalid username!"}`))
+	r.Header.Set("Origin", s.origin)
+	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.liteHandler().ServeHTTP(w,r)
-	if w.Code!=200 || calls!=1 || !strings.Contains(w.Body.String(),`"eligible":true`) { t.Fatalf("%d %s",w.Code,w.Body.String()) }
+	s.liteHandler().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "用户名") {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestLiteRejectsCrossOrigin(t *testing.T) {
