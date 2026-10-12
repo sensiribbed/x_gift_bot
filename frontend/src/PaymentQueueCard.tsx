@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Box, Card, CardContent, Divider, LinearProgress, Stack, Step, StepLabel, Stepper, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, CardContent, Divider, LinearProgress, Stack, Step, StepLabel, Stepper, Typography } from "@mui/material";
 import ScheduleRounded from "@mui/icons-material/ScheduleRounded";
 import LockOutlined from "@mui/icons-material/LockOutlined";
 
@@ -9,11 +9,16 @@ export type QueueProgress = {
   estimated_wait_seconds?: number;
 };
 
-export function PaymentQueueCard({ progress, username, months, price }: {
+export function PaymentQueueCard({ progress, username, months, price, onCancel, cancelling, reconnecting, onNotify, notifyReady }: {
   progress: QueueProgress;
   username: string;
   months: number;
   price: string;
+  onCancel?: () => void;
+  cancelling?: boolean;
+  reconnecting?: boolean;
+  onNotify?: () => void;
+  notifyReady?: boolean;
 }) {
   const card = useRef<HTMLDivElement>(null);
   useEffect(() => { card.current?.focus({ preventScroll: true }); }, []);
@@ -23,7 +28,7 @@ export function PaymentQueueCard({ progress, username, months, price }: {
   const hasEstimate = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0;
   const unit = hasEstimate && seconds >= 3600 ? "小时" : hasEstimate && seconds >= 60 ? "分钟" : "秒";
   const value = hasEstimate ? Math.ceil(seconds / (seconds >= 3600 ? 3600 : seconds >= 60 ? 60 : 1)) : null;
-  const title = submitting ? "正在提交请求" : processing ? "正在为你生成链接" : "已加入队列";
+  const title = reconnecting ? "连接中断，正在重连" : submitting ? "正在提交请求" : processing ? "正在为你生成链接" : "已加入队列";
   return (
     <Card ref={card} tabIndex={-1} role="region" variant="outlined" aria-labelledby="payment-queue-title" sx={{ borderRadius: 2, bgcolor: "background.paper", outlineOffset: 4 }}>
       <CardContent sx={{ p: { xs: 2.5, sm: 3 }, "&:last-child": { pb: { xs: 2.5, sm: 3 } } }}>
@@ -33,7 +38,7 @@ export function PaymentQueueCard({ progress, username, months, price }: {
           </Box>
           <Box role="status" aria-live="polite" aria-atomic="true">
             <Typography id="payment-queue-title" variant="h3">{title}</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>{submitting ? "请稍候，正在确认你的请求" : processing ? "完成后将在这里显示付款入口" : "你的请求将按顺序处理"}</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>{reconnecting ? "正在恢复原排队，请勿重复提交" : submitting ? "请稍候，正在确认你的请求" : processing ? "完成后将在这里显示付款入口" : "你的请求将按顺序处理"}</Typography>
           </Box>
         </Stack>
 
@@ -62,6 +67,12 @@ export function PaymentQueueCard({ progress, username, months, price }: {
           {["提交请求", "排队等待", "生成链接"].map((label) => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}
         </Stepper>
 
+        {onNotify && <Button variant="outlined" fullWidth onClick={onNotify} disabled={notifyReady} sx={{ mb: 2, minHeight: 44 }}>{notifyReady ? "已开启就绪通知" : "链接就绪时通知我"}</Button>}
+        <Alert severity="warning" icon={false} sx={{ mb: 3 }}>
+          <Typography variant="body2" fontWeight={600}>轮到你后，付款链接只保留 3 分钟</Typography>
+          <Typography variant="body2" sx={{ mt: 0.5 }}>请提前准备好银行卡，本站付款窗口结束后可重新排队生成新链接，旧链接可能仍可付款，请勿重复支付。等待时请让本页保持打开：手机切到其他应用超过约 1.5 分钟会暂停你的排队，超过 5 分钟会被移出队列。页面标题会显示排队进度和付款倒计时。</Typography>
+        </Alert>
+
         <Divider sx={{ mb: 2 }} />
         <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={0.5}>
           <Typography variant="body2" fontWeight={600} sx={{ overflowWrap: "anywhere" }}>@{username}</Typography>
@@ -69,8 +80,9 @@ export function PaymentQueueCard({ progress, username, months, price }: {
         </Stack>
         <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ mt: 2 }}>
           <LockOutlined sx={{ fontSize: 16, color: "text.secondary", mt: "3px" }} aria-hidden="true" />
-          <Typography variant="caption" color="text.secondary">请保持页面打开，无需重复提交。生成链接不会扣款。</Typography>
+          <Typography variant="caption" color="text.secondary">刷新页面不会退出排队；关闭或离开网站后会自动退出。生成链接不会扣款。</Typography>
         </Stack>
+        {onCancel && <Button variant="outlined" fullWidth onClick={onCancel} disabled={cancelling} sx={{ mt: 2, minHeight: 44 }}>{cancelling ? "正在退出…" : "放弃排队"}</Button>}
       </CardContent>
     </Card>
   );

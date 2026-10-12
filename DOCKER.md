@@ -1,12 +1,18 @@
 # XGift Lite：Docker 部署
 
-只提供 **检测赠送资格** 和 **手动付款链接**。保留上游的链接验证、排队、15 分钟付款窗口和缓存；没有兑换码、管理后台、银行卡配置或自动扣款任务。
+只提供 **检测赠送资格** 和 **手动付款链接**。保留上游的链接验证、排队、3 分钟本地付款窗口和缓存；没有兑换码、管理后台、银行卡配置或自动扣款任务。
 
 - 镜像：`ghcr.io/sensiribbed/x_gift_bot:lite`
 - 支持 Linux amd64 / arm64（包括你的 ARM VPS）。
 - Caddy 自动申请、续期 HTTPS 证书。
 - 上游源代码保留用于合并；镜像只运行 `xgift-lite`，配置工具是 `xgift-config`。
 - 旧完整版 `:latest` 不随精简版更新，保留用于过渡。不要沿用旧 `.env` 的镜像地址。
+
+## 2026-10-12 更新说明
+
+已同步上游 ea9df0e：队列持久化、刷新恢复、失败提示、旧订单阻塞修复和显式重新生成链接。保留 Lite 的两个功能与脱敏诊断。3 分钟仅是本站队列窗口，旧 Stripe 链接可能仍可付款；重新生成前请核实原付款，避免在多个链接重复付款。
+
+已有 Lite 用户无需重新初始化：先运行 `bash deploy/docker/manage.sh backup`，再 `docker compose pull app` 和 `docker compose up -d app`。本次 Compose 与凭据格式不变。不要删除数据卷。
 
 ## 首次部署
 

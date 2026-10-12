@@ -24,6 +24,7 @@ func (s *server) liteHandler() http.Handler {
 	mux.HandleFunc("GET /favicon.svg", s.asset("favicon.svg", "image/svg+xml"))
 	mux.HandleFunc("GET /appearance.js", s.asset("appearance.js", "application/javascript; charset=utf-8"))
 	mux.HandleFunc("GET /lite.js", s.asset("lite.js", "application/javascript; charset=utf-8"))
+	mux.HandleFunc("GET /payment-notifications.js", s.asset("payment-notifications.js", "application/javascript; charset=utf-8"))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		b, err := s.vault.Get("vault-check")
 		defer clear(b)
@@ -37,6 +38,11 @@ func (s *server) liteHandler() http.Handler {
 	mux.HandleFunc("POST /api/check", s.human("check", s.check))
 	mux.HandleFunc("GET /api/manual-link/plans", s.publicLinkPlans)
 	mux.HandleFunc("POST /api/manual-link", s.human("manual_link", s.publicLink))
+	mux.HandleFunc("GET /api/manual-link/queue", s.publicLinkQueueSummary)
+	mux.HandleFunc("GET /api/manual-link/order", s.publicOrderStatus)
+	mux.HandleFunc("GET /api/manual-link/queue/current", s.currentPublicLinkQueue)
+	mux.HandleFunc("POST /api/manual-link/queue/{ticket}/leave", s.leavePublicLinkQueue)
+	mux.HandleFunc("POST /api/manual-link/queue/{ticket}/cancel", s.cancelPublicLinkQueue)
 	mux.HandleFunc("GET /api/manual-link/queue/{ticket}", s.publicLinkQueueStatus)
 	return s.middleware(mux)
 }
@@ -62,6 +68,7 @@ func RunLite(ctx context.Context) error {
 	if err != nil { return err }
 	defer v.Close()
 	s := &server{vault: v, origin: origin, lockPath: filepath.Join(dir, "checkout.lock"), work: make(chan struct{}, 1), checks: make(chan struct{}, 4), ctx: ctx, limits: map[string]limit{}}
+	if err = s.restorePublicLinkQueue(); err != nil { return err }
 	if err = s.configureTurnstile(); err != nil { return err }
 	raw, err := v.Get("proxy")
 	if err != nil { return err }
@@ -95,6 +102,10 @@ func RunLite(ctx context.Context) error {
 	defer stop()
 	if h.Shutdown(shutdown) != nil { h.Close() }
 	s.jobs.Wait()
+	s.linkQueue.mu.Lock()
+	queueErr := s.saveQueue()
+	s.linkQueue.mu.Unlock()
+	if queueErr != nil { return queueErr }
 	if errors.Is(err, http.ErrServerClosed) { return nil }
 	return err
 }

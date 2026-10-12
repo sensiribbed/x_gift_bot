@@ -46,12 +46,12 @@ func TestActiveCheckoutWindowAndEarlyCompletion(t *testing.T) {
 				}
 			} else {
 				var wait *CheckoutWaitError
-				if !errors.As(err, &wait) || wait.Wait < 13*time.Minute {
+				if !errors.As(err, &wait) || wait.Wait < time.Minute {
 					t.Fatalf("unprotected active order: %v", err)
 				}
 			}
-			if state == "expired" && reads != 0 {
-				t.Fatal("expired window still made blocking network request")
+			if state == "expired" && reads != 1 {
+				t.Fatal("expired window skipped final payment verification")
 			}
 			stored, e := readActiveCheckout(v)
 			if e != nil {
@@ -60,7 +60,7 @@ func TestActiveCheckoutWindowAndEarlyCompletion(t *testing.T) {
 			if stored.ExpiresAt != a.ExpiresAt {
 				t.Fatal("window was extended")
 			}
-			if stored.Released != (state == "paid") {
+			if stored.Released != (state == "paid" || state == "expired") {
 				t.Fatal("early release without paid evidence")
 			}
 			wait, e := CheckoutCreationWait(v, time.Now())
@@ -71,7 +71,7 @@ func TestActiveCheckoutWindowAndEarlyCompletion(t *testing.T) {
 				if wait != 0 {
 					t.Fatal("released wait remains")
 				}
-			} else if wait < 13*time.Minute {
+			} else if wait < time.Minute {
 				t.Fatal("persisted wait lost")
 			}
 			// A newly constructed client sees the durable reservation after a restart.
@@ -85,71 +85,72 @@ func TestActiveCheckoutWindowAndEarlyCompletion(t *testing.T) {
 	}
 }
 
-func TestActiveCheckoutBootstrapsMostRecentPublicLink(t *testing.T) {
+func TestUndecidableExpiredWindowReleasesAfterGrace(t *testing.T) {
 	v := controlFixture(t)
-	now := time.Now()
-	for i, user := range []string{"older", "latest"} {
-		r := Record{Username: user, RecipientID: user, Months: 6, Amount: 60000, Currency: "USD", ProductID: "prod_Test", Created: now.Add(-time.Duration(2-i) * time.Minute).Unix(), Status: "created", SessionID: "cs_live_" + user, URL: "https://checkout.stripe.com/c/pay/cs_live_" + user}
-		b, _ := json.Marshal(publicLinkRecord{Order: r})
-		if err := v.Put("public-checkout:"+user, b); err != nil {
-			t.Fatal(err)
-		}
-	}
-	a, err := bootstrapActiveCheckout(v, now)
-	if err != nil || a.Order.Username != "latest" {
-		t.Fatalf("failed to preserve latest published link: %v", err)
-	}
-	originalExpiry := a.ExpiresAt
-	a.Released = true
+	p := Plan{Months: 6, Minor: 60000, Currency: "usd", ProductID: "prod_TEST6MO", Merchant: "acct_Test"}
+	r := Record{Username: "recipient", RecipientID: "1234", Months: 6, Amount: 60000, Currency: "USD", ProductID: p.ProductID, Created: time.Now().Add(-time.Hour).Unix(), Status: "created", SessionID: "cs_live_Grace", URL: "https://checkout.stripe.com/c/pay/cs_live_Grace"}
+	a := activeCheckout{Order: r, Plan: p, ExpiresAt: time.Now().Add(-staleWindowGrace - time.Minute).UnixMilli()}
 	if err := saveActiveCheckout(v, a); err != nil {
 		t.Fatal(err)
 	}
-	again, err := bootstrapActiveCheckout(v, now.Add(time.Minute))
-	if err != nil || !again.Released || again.ExpiresAt != originalExpiry {
-		t.Fatal("migration reran or extended expiry", err)
-	}
-}
-
-func TestPaidReleaseStillHonorsCreationMinimum(t *testing.T) {
-	v := controlFixture(t)
-	now := time.Now()
-	p := Plan{Months: 6, Minor: 60000, Currency: "usd", ProductID: "prod_Test"}
-	r := Record{Username: "recipient", SessionID: "cs_live_Test", Created: now.Unix(), Status: "created"}
-	if err := saveActiveCheckout(v, activeCheckout{Order: r, Plan: p, ExpiresAt: time.Unix(r.Created, 0).Add(publicLinkTTL).UnixMilli()}); err != nil {
-		t.Fatal(err)
-	}
-	if err := reserveCheckoutCreation(v, now); err != nil {
-		t.Fatal(err)
-	}
-	x := &xClient{vault: v, readCheckout: func(_ context.Context, r *Record) (*paymentPage, error) {
-		p := publicPageFixture(r, p)
-		p.Status = "complete"
-		p.PaymentStatus = "paid"
-		return p, nil
+	x := &xClient{vault: v, readCheckout: func(_ context.Context, rec *Record) (*paymentPage, error) {
+		page := publicPageFixture(rec, p)
+		raw, _ := json.Marshal(page)
+		var fields map[string]any
+		json.Unmarshal(raw, &fields)
+		fields["payment_intent"] = map[string]any{"id": "pi_Synthetic", "status": "processing", "amount": 60000, "currency": "usd", "amount_received": 0}
+		raw, _ = json.Marshal(fields)
+		json.Unmarshal(raw, page)
+		return page, nil
 	}}
-	var wait *CheckoutWaitError
-	if err := x.checkCreation(context.Background(), now); !errors.As(err, &wait) || wait.Wait > 15*time.Second {
-		t.Fatalf("minimum interval bypassed: %v", err)
+	// A still-processing payment long past its window releases the slot so
+	// later card checkouts are not blocked indefinitely; the session itself
+	// remains payable upstream.
+	if err := x.checkCreation(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := readActiveCheckout(v)
+	if err != nil || !stored.Released {
+		t.Fatal("undecidable expired window held the slot past grace")
 	}
 }
 
-func TestActiveCheckoutPollReleasesCompletedInactiveSession(t *testing.T) {
-	v := controlFixture(t)
-	now := time.Now()
-	plan := Plan{Months: 6, Minor: 60000, Currency: "usd", ProductID: "prod_Test"}
-	r := Record{Username: "recipient", SessionID: "cs_live_Test", Created: now.Add(-time.Minute).Unix(), Status: "created"}
-	if err := saveActiveCheckout(v, activeCheckout{Order: r, Plan: plan, ExpiresAt: time.Unix(r.Created, 0).Add(publicLinkTTL).UnixMilli()}); err != nil {
-		t.Fatal(err)
-	}
-	polls := 0
-	x := &xClient{vault: v, readCheckout: func(context.Context, *Record) (*paymentPage, error) {
-		return nil, &stripeError{Code: "checkout_not_active_session"}
-	}, readCheckoutPaid: func(context.Context, *Record, Plan) (bool, error) { polls++; return true, nil }}
-	if err := x.checkCreation(context.Background(), now); err != nil {
-		t.Fatal(err)
-	}
-	a, err := readActiveCheckout(v)
-	if err != nil || !a.Released || polls != 1 {
-		t.Fatalf("paid poll did not release window: %v polls=%d", err, polls)
+func TestExpiredWindowNeverInterruptsPaymentOrAssumesNetworkFailureIsUnpaid(t *testing.T) {
+	for _, state := range []string{"processing", "requires_action", "network_error", "wrong_session"} {
+		t.Run(state, func(t *testing.T) {
+			v := controlFixture(t)
+			now := time.Now()
+			p := Plan{Months: 6, Minor: 60000, Currency: "usd", ProductID: "prod_TEST6MO", Merchant: "acct_Test"}
+			r := Record{Username: "recipient", RecipientID: "1234", Months: 6, Amount: 60000, Currency: "USD", ProductID: p.ProductID, Created: now.Add(-4 * time.Minute).Unix(), Status: "created", SessionID: "cs_live_Active", URL: "https://checkout.stripe.com/c/pay/cs_live_Active"}
+			a := activeCheckout{Order: r, Plan: p, ExpiresAt: time.Unix(r.Created, 0).Add(publicLinkTTL).UnixMilli()}
+			if err := saveActiveCheckout(v, a); err != nil {
+				t.Fatal(err)
+			}
+			x := &xClient{vault: v, readCheckout: func(_ context.Context, rec *Record) (*paymentPage, error) {
+				if state == "network_error" {
+					return nil, errors.New("temporary network failure")
+				}
+				page := publicPageFixture(rec, p)
+				if state == "wrong_session" {
+					page.SessionID = "cs_live_Wrong"
+				} else {
+					raw, _ := json.Marshal(page)
+					var fields map[string]any
+					json.Unmarshal(raw, &fields)
+					fields["payment_intent"] = map[string]any{"id": "pi_Synthetic", "status": state, "amount": 60000, "currency": "usd", "amount_received": 0}
+					raw, _ = json.Marshal(fields)
+					json.Unmarshal(raw, page)
+				}
+				return page, nil
+			}}
+			var wait *CheckoutWaitError
+			if err := x.checkCreation(context.Background(), now); !errors.As(err, &wait) {
+				t.Fatal("expired in-flight payment was replaced", err)
+			}
+			stored, err := readActiveCheckout(v)
+			if err != nil || stored.Released || stored.ExpiresAt != a.ExpiresAt {
+				t.Fatal("lost payment protection or extended idle TTL", err)
+			}
+		})
 	}
 }

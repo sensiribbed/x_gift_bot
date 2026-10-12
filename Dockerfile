@@ -7,7 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY frontend ./frontend
-RUN npm run check && node frontend/scripts/build-lite.mjs
+RUN npm run check && node --test frontend/tests/queueReconnect.test.mjs && node frontend/scripts/build-lite.mjs
 
 FROM ${GO_IMAGE} AS backend
 WORKDIR /src

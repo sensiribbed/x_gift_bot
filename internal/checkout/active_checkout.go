@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 	"xgift/internal/vault"
 )
@@ -20,6 +19,10 @@ func (e *CheckoutWaitError) Error() string {
 	return "checkout creation is waiting for the active payment window"
 }
 func (e *CheckoutWaitError) Unwrap() error { return ErrCheckoutRateLimited }
+
+// staleWindowGrace bounds how long an undecidable expired session may hold
+// the creation slot after its payment window ended; afterwards it releases.
+const staleWindowGrace = 10 * time.Minute
 
 type activeCheckout struct {
 	Order     Record `json:"order"`
@@ -45,62 +48,20 @@ func readActiveCheckout(v *vault.Vault) (activeCheckout, error) {
 	if err = json.Unmarshal(b, &a); err != nil {
 		return a, err
 	}
-	if a.ExpiresAt != 0 && (a.Order.SessionID == "" || a.Order.Created <= 0 || a.ExpiresAt != time.Unix(a.Order.Created, 0).Add(publicLinkTTL).UnixMilli()) {
-		return a, errors.New("invalid active checkout reservation")
+	// The window always ends at creation + publicLinkTTL, never sliding.
+	if a.ExpiresAt != 0 {
+		a.ExpiresAt = time.Unix(a.Order.Created, 0).Add(publicLinkTTL).UnixMilli()
 	}
 	return a, nil
 }
 
-// Bootstrap once under checkout.lock so the first post-upgrade creation cannot
-// invalidate the most recently published legacy public link. Unknown outcomes
-// stay protected until their fixed deadline; only verified paid evidence frees it.
-func bootstrapActiveCheckout(v *vault.Vault, now time.Time) (activeCheckout, error) {
+// currentActiveCheckout treats a missing reservation as no active window.
+func currentActiveCheckout(v *vault.Vault) (activeCheckout, error) {
 	a, err := readActiveCheckout(v)
-	if !errors.Is(err, sql.ErrNoRows) {
-		return a, err
+	if errors.Is(err, sql.ErrNoRows) {
+		return activeCheckout{}, nil
 	}
-	for _, prefix := range []string{"public-checkout:", "checkout:"} {
-		names, err := v.NamesWithPrefix(prefix)
-		if err != nil {
-			return a, err
-		}
-		for _, name := range names {
-			b, e := v.Get(name)
-			if e != nil {
-				return a, e
-			}
-			var r Record
-			if prefix == "public-checkout:" {
-				var saved publicLinkRecord
-				e = json.Unmarshal(b, &saved)
-				r = saved.Order
-			} else {
-				e = json.Unmarshal(b, &r)
-			}
-			clear(b)
-			if e != nil {
-				return a, e
-			}
-			if r.Status == "succeeded" || !publicLinkFresh(&r, now) || CheckoutLink(&r) == "" {
-				continue
-			}
-			if prefix == "public-checkout:" && (r.Status != "created" || !unsubmitted(&r) || r.CardFingerprint != "") {
-				continue
-			}
-			if r.Created > a.Order.Created {
-				a.Order = r
-			}
-		}
-	}
-	if a.Order.SessionID != "" {
-		r := a.Order
-		a.Plan = Plan{Months: r.Months, Minor: r.Amount, Currency: strings.ToLower(r.Currency), ProductID: r.ProductID}
-		if cat, e := ReadCatalog(v); e == nil {
-			a.Plan.Merchant = cat.Merchant
-		}
-		a.ExpiresAt = time.Unix(r.Created, 0).Add(publicLinkTTL).UnixMilli()
-	}
-	return a, saveActiveCheckout(v, a)
+	return a, err
 }
 
 // Callers hold checkout.lock. A successful publication reserves its original
@@ -109,7 +70,7 @@ func holdPublicCheckout(v *vault.Vault, r *Record, p Plan, now time.Time) error 
 	if r.Status != "created" || !publicLinkFresh(r, now) {
 		return nil
 	}
-	current, err := bootstrapActiveCheckout(v, now)
+	current, err := currentActiveCheckout(v)
 	if err != nil {
 		return err
 	}
@@ -153,17 +114,18 @@ func CheckoutCreationWait(v *vault.Vault, now time.Time) (time.Duration, error) 
 }
 
 func (x *xClient) checkCreation(ctx context.Context, now time.Time) error {
-	a, err := bootstrapActiveCheckout(x.vault, now)
+	a, err := currentActiveCheckout(x.vault)
 	if err != nil {
 		return err
 	}
-	if !a.Released && a.ExpiresAt > now.UnixMilli() {
+	if !a.Released && a.ExpiresAt != 0 {
 		if x.publicReplacement != "" && a.Order.SessionID == x.publicReplacement && a.Order.CardFingerprint == "" && unsubmitted(&a.Order) {
 			return checkCheckoutCreation(x.vault, time.Now())
 		}
 		r := a.Order
-		verified := verifyPublicCheckout(ctx, x.vault, x, &r, a.Plan) == nil && r.Status == "succeeded"
-		if !verified {
+		verificationErr := verifyPublicCheckout(ctx, x.vault, x, &r, a.Plan)
+		verified := verificationErr == nil && r.Status == "succeeded"
+		if !verified && !errors.Is(verificationErr, ErrPublicPaymentDeclined) {
 			paid, _ := x.checkoutPaid(ctx, &r, a.Plan)
 			if paid {
 				r.Status = "succeeded"
@@ -176,8 +138,32 @@ func (x *xClient) checkCreation(ctx context.Context, now time.Time) error {
 			if err := saveActiveCheckout(x.vault, a); err != nil {
 				return err
 			}
+		} else if errors.Is(verificationErr, ErrPublicPaymentDeclined) {
+			if _, err := releaseDeclinedCheckout(x.vault, r.SessionID); err != nil {
+				return err
+			}
 		} else if remaining := time.Until(time.UnixMilli(a.ExpiresAt)); remaining > 0 {
 			return &CheckoutWaitError{Wait: remaining}
+		} else if x.publicGeneration {
+			// An elapsed local queue window may yield to another explicit link-only
+			// request even when payment is unknown. This does not invalidate the old
+			// session or establish nonpayment; automatic payment paths still wait.
+			a.Released = true
+			if err := saveActiveCheckout(x.vault, a); err != nil {
+				return err
+			}
+		} else if verificationErr != nil && !errors.Is(verificationErr, ErrVerifyUnpaid) && time.Until(time.UnixMilli(a.ExpiresAt).Add(staleWindowGrace)) > 0 {
+			// The 180-second window limits idle checkouts. It is not permission
+			// to invalidate an in-flight payment or ignore a failed status read,
+			// so a genuinely undecidable session gets one short grace period —
+			// never an indefinite hold on every later request.
+			return &CheckoutWaitError{Wait: 10 * time.Second}
+		} else {
+			// A final live check proved the idle/failed payment can be replaced.
+			a.Released = true
+			if err := saveActiveCheckout(x.vault, a); err != nil {
+				return err
+			}
 		}
 	}
 	return checkCheckoutCreation(x.vault, time.Now())
@@ -239,4 +225,21 @@ func (x *xClient) releasePublicReplacement(v *vault.Vault) error {
 		return saveActiveCheckout(v, a)
 	}
 	return nil
+}
+
+// Called under checkout.lock after a guarded live Stripe read. Do not release
+// another recipient's reservation or mark a refused payment as successful.
+func releaseDeclinedCheckout(v *vault.Vault, session string) (bool, error) {
+	a, err := readActiveCheckout(v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if a.Released || a.Order.SessionID != session {
+		return false, nil
+	}
+	a.Released = true
+	return true, saveActiveCheckout(v, a)
 }

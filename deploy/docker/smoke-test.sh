@@ -38,6 +38,8 @@ for path in admin admin.js app.js api/redeem api/admin/codes api/admin/recovery/
 done
 docker exec "$name" curl -fsS http://127.0.0.1:8787/ | grep -q '/lite.js'
 docker exec "$name" curl -fsS http://127.0.0.1:8787/api/manual-link/plans | jq -e '.plans | length > 0'
+docker exec "$name" curl -fsS http://127.0.0.1:8787/api/manual-link/queue | jq -e '.waiting == 0'
+docker exec "$name" curl -fsS http://127.0.0.1:8787/payment-notifications.js > /dev/null
 docker exec "$name" sh -c 'test ! -e /data/site.db && test ! -e /data/admin-password && ! command -v xgift && ! command -v xgift-web'
 before="$(docker exec "$name" sha256sum /data/vault-password)"
 docker restart "$name"
